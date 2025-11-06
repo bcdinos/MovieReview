@@ -23,10 +23,6 @@ creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDS_FILE, scop
 client = gspread.authorize(creds)
 sheet = client.open(GOOGLE_SHEET_NAME).sheet1
 
-# ======== Discord Bot Setup ========
-intents = discord.Intents.default()
-bot = commands.Bot(command_prefix='!', intents=intents)
-
 def fetch_movie_details(title):
     """Fetch movie details from TMDb API"""
     search_url = f"https://api.themoviedb.org/3/search/movie?api_key={TMDB_API_KEY}&query={title}"
