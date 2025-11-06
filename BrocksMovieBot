@@ -1,17 +1,13 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
-
-intents = discord.Intents.default()
-intents.message_content = True
-
-bot = commands.Bot(command_prefix='!', intents=intents)
 import requests
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 import os
 
-# ======== Configuration - Use environment variables or replace below ========
+# ======== Configuration ========
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 TMDB_API_KEY = os.getenv('TMDB_API_KEY')
 GOOGLE_CREDS_FILE = 'google-creds.json'  # Keep this file local, do not push to GitHub!
@@ -23,8 +19,22 @@ creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDS_FILE, scop
 client = gspread.authorize(creds)
 sheet = client.open(GOOGLE_SHEET_NAME).sheet1
 
+# ======== Define bot class with intents and app command tree ========
+class MyBot(commands.Bot):
+    def __init__(self):
+        intents = discord.Intents.default()
+        intents.message_content = True
+        super().__init__(command_prefix="!", intents=intents)
+        self.tree = app_commands.CommandTree(self)
+
+    async def setup_hook(self):
+        # Sync the command tree (register slash commands with Discord)
+        await self.tree.sync()
+
+bot = MyBot()
+
+# ======== Function to fetch movie details ========
 def fetch_movie_details(title):
-    """Fetch movie details from TMDb API"""
     search_url = f"https://api.themoviedb.org/3/search/movie?api_key={TMDB_API_KEY}&query={title}"
     response = requests.get(search_url).json()
     if not response['results']:
@@ -50,31 +60,8 @@ def fetch_movie_details(title):
         'actors': ', '.join(actors) if actors else 'N/A'
     }
 
-@bot.command(name='rate')
-async def rate_movie(ctx, title: str, rating: float):
-    if rating < 0 or rating > 5:
-        await ctx.send("Please provide a rating between 0 and 5.")
-        return
-    await ctx.send(f"Fetching details for '{title}'...")
-
-    movie = fetch_movie_details(title)
-    if not movie:
-        await ctx.send(f"Sorry, could not find movie '{title}'.")
-        return
-
-    watch_date = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
-
-    sheet.append_row([
-        movie['title'],
-        movie['genre'],
-        rating,
-        movie['runtime'],
-        watch_date,
-        movie['release_year'],
-        movie['directors'],
-        movie['actors']
-    ])
-
-    await ctx.send(f"Your rating of {rating}/5 for '{movie['title']}' has been recorded!")
-
-bot.run(DISCORD_BOT_TOKEN)
+# ======== Slash command to rate a movie ========
+@bot.tree.command(name="rate", description="Rate a movie")
+@app_commands.describe(title="Movie title to rate", rating="Rating from 0 to 5")
+async def rate_command(interaction: discord.Interaction, title: str, rating: float):
+    if rating < 0 or rating >
