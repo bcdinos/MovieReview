@@ -36,21 +36,36 @@ bot = MyBot()
 
 # ======== Movie select dropdown UI ========
 class MovieSelect(Select):
-    def __init__(self, options, interaction):
+    def __init__(self, options, rating):
         super().__init__(placeholder="Choose a movie...", min_values=1, max_values=1, options=options)
-        self.interaction = interaction
+        self.rating = rating  # store rating to use on selection
 
     async def callback(self, interaction: discord.Interaction):
         selected_movie_id = int(self.values[0])
-        # Fetch details by selected id and proceed with rating logic or prompt user to re-run
-        # For demo purposes, just acknowledge selection
-        await interaction.response.send_message(f"You selected movie ID {selected_movie_id}. Please re-run the /rate command with exact title to confirm.", ephemeral=True)
+        details = fetch_movie_details_by_id(selected_movie_id)
+        movie = parse_movie_details(details)
+
+        watch_date = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+
+        sheet.append_row([
+            movie['title'],
+            movie['genre'],
+            self.rating,
+            movie['runtime'],
+            watch_date,
+            movie['release_year'],
+            movie['directors'],
+            movie['actors'],
+            movie['age_rating']
+        ])
+
+        await interaction.response.edit_message(content=f"Your rating of {self.rating}/5 for '{movie['title']}' recorded successfully!", view=None)
 
 class MovieSelectView(View):
-    def __init__(self, options, interaction):
+    def __init__(self, options, rating):
         super().__init__()
-        self.add_item(MovieSelect(options, interaction))
-        self.bot = bot
+        self.add_item(MovieSelect(options, rating))
+
 
 # ======== Fetch and rank movie results using fuzzy matching and popularity ========
 def fetch_movie_search_results(title):
@@ -112,9 +127,7 @@ async def handle_movie_selection(interaction, title, rating):
 
     scored_results = choose_best_movie(title, results)
 
-    # Check score thresholds and ambiguity before showing dropdown
     if scored_results[0][0] < 75 or (len(scored_results) > 1 and scored_results[0][0] - scored_results[1][0] < 5):
-        # Create unique select options by movie ID (unique value)
         select_options = [
             discord.SelectOption(
                 label=f"{m['title']} ({m.get('release_date', '')[:4]})",
@@ -122,11 +135,10 @@ async def handle_movie_selection(interaction, title, rating):
             )
             for _, m in scored_results[:5]
         ]
-        view = MovieSelectView(select_options, interaction)
+        view = MovieSelectView(select_options, rating)
         await interaction.followup.send("Multiple possible movies found. Please select the correct one:", view=view, ephemeral=True)
         return
 
-    # Otherwise proceed with best matched movie
     movie_id = scored_results[0][1]['id']
     details = fetch_movie_details_by_id(movie_id)
     movie = parse_movie_details(details)
