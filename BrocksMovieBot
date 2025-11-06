@@ -1,0 +1,79 @@
+import discord
+from discord.ext import commands
+import requests
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+from datetime import datetime
+import os
+
+# ======== Configuration - Use environment variables or replace below ========
+DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
+TMDB_API_KEY = os.getenv('TMDB_API_KEY')
+GOOGLE_CREDS_FILE = 'google-creds.json'  # Keep this file local, do not push to GitHub!
+GOOGLE_SHEET_NAME = 'Your Google Sheet Name'  # Replace with your actual sheet name
+
+# ======== Setup Google Sheets client ========
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDS_FILE, scope)
+client = gspread.authorize(creds)
+sheet = client.open(GOOGLE_SHEET_NAME).sheet1
+
+# ======== Discord Bot Setup ========
+intents = discord.Intents.default()
+bot = commands.Bot(command_prefix='!', intents=intents)
+
+def fetch_movie_details(title):
+    """Fetch movie details from TMDb API"""
+    search_url = f"https://api.themoviedb.org/3/search/movie?api_key={TMDB_API_KEY}&query={title}"
+    response = requests.get(search_url).json()
+    if not response['results']:
+        return None
+    movie = response['results'][0]
+    movie_id = movie['id']
+
+    details_url = f"https://api.themoviedb.org/3/movie/{movie_id}?api_key={TMDB_API_KEY}&append_to_response=credits"
+    details = requests.get(details_url).json()
+
+    genres = ', '.join([g['name'] for g in details.get('genres', [])])
+    runtime = details.get('runtime', 'N/A')
+    release_year = details.get('release_date', '')[:4]
+    directors = [c['name'] for c in details['credits']['crew'] if c['job'] == 'Director']
+    actors = [a['name'] for a in details['credits']['cast'][:3]]
+
+    return {
+        'title': details.get('title', 'N/A'),
+        'genre': genres,
+        'runtime': runtime,
+        'release_year': release_year,
+        'directors': ', '.join(directors) if directors else 'N/A',
+        'actors': ', '.join(actors) if actors else 'N/A'
+    }
+
+@bot.command(name='rate')
+async def rate_movie(ctx, title: str, rating: float):
+    if rating < 0 or rating > 5:
+        await ctx.send("Please provide a rating between 0 and 5.")
+        return
+    await ctx.send(f"Fetching details for '{title}'...")
+
+    movie = fetch_movie_details(title)
+    if not movie:
+        await ctx.send(f"Sorry, could not find movie '{title}'.")
+        return
+
+    watch_date = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+
+    sheet.append_row([
+        movie['title'],
+        movie['genre'],
+        rating,
+        movie['runtime'],
+        watch_date,
+        movie['release_year'],
+        movie['directors'],
+        movie['actors']
+    ])
+
+    await ctx.send(f"Your rating of {rating}/5 for '{movie['title']}' has been recorded!")
+
+bot.run(DISCORD_BOT_TOKEN)
