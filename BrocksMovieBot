@@ -64,4 +64,31 @@ def fetch_movie_details(title):
 @bot.tree.command(name="rate", description="Rate a movie")
 @app_commands.describe(title="Movie title to rate", rating="Rating from 0 to 5")
 async def rate_command(interaction: discord.Interaction, title: str, rating: float):
-    if rating < 0 or rating >
+    if rating < 0 or rating > 5:
+        await interaction.response.send_message("Please provide a rating between 0 and 5.", ephemeral=True)
+        return
+
+    await interaction.response.defer()  # Acknowledge the command to avoid timeout
+
+    movie = fetch_movie_details(title)
+    if not movie:
+        await interaction.followup.send(f"Sorry, could not find movie '{title}'.")
+        return
+
+    watch_date = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+
+    sheet.append_row([
+        movie['title'],
+        movie['genre'],
+        rating,
+        movie['runtime'],
+        watch_date,
+        movie['release_year'],
+        movie['directors'],
+        movie['actors']
+    ])
+
+    await interaction.followup.send(f"Your rating of {rating}/5 for '{movie['title']}' has been recorded!")
+
+# ======== Run the bot ========
+bot.run(DISCORD_BOT_TOKEN)
