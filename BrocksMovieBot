@@ -1,6 +1,7 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
+from discord.ui import Select, View
 import requests
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -29,53 +30,61 @@ class MyBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        # Sync the command tree to register slash commands
         await self.tree.sync()
 
 bot = MyBot()
 
+# ======== Movie select dropdown UI ========
+class MovieSelect(Select):
+    def __init__(self, options, interaction):
+        # options should be a list of discord.SelectOption
+        super().__init__(placeholder="Choose a movie...", min_values=1, max_values=1, options=options)
+        self.interaction = interaction
+
+    async def callback(self, interaction: discord.Interaction):
+        selected_label = self.values[0]
+        # Save selected movie title to process rating now
+        self.bot = self.view.bot  # get bot from view
+        await interaction.response.send_message(f"You selected {selected_label}. Please re-run the /rate command with the exact title to confirm.", ephemeral=True)
+        # Here you might implement more interactive flow to continue rating directly.
+
+class MovieSelectView(View):
+    def __init__(self, options, interaction):
+        super().__init__()
+        self.add_item(MovieSelect(options, interaction))
+        self.bot = bot
+
 # ======== Improved fetch movie details with fuzzy matching and age rating ========
-def fetch_movie_details(title):
+def fetch_movie_search_results(title):
     search_url = f"https://api.themoviedb.org/3/search/movie?api_key={TMDB_API_KEY}&query={title}"
     response = requests.get(search_url).json()
-    results = response.get('results', [])
+    return response.get('results', [])
 
-    if not results:
-        return None, None
-
-    # Use fuzzy matching to find closest title match
-    scored_results = []
+def choose_best_movie(title, results):
     lower_title = title.lower()
+    scored_results = []
 
     for movie in results:
         candidate_title = movie.get('title', '').lower()
-        score = fuzz.ratio(lower_title, candidate_title)
-        scored_results.append((score, movie))
+        similarity = fuzz.ratio(lower_title, candidate_title)
+        popularity = movie.get('popularity', 0)
+        combined_score = similarity * 0.7 + popularity * 0.3
+        scored_results.append((combined_score, movie))
 
-    # Sort descending by score
     scored_results.sort(key=lambda x: x[0], reverse=True)
+    return scored_results
 
-    # If top score is low, return multiple options for clarification
-    if scored_results[0][0] < 70:  # threshold 70 can be tuned
-        # return none and list of options
-        options = [(m['title'], m.get('release_date', '')[:4]) for s,m in scored_results[:5]]
-        return None, options
-
-    # Use top scored movie
-    movie = scored_results[0][1]
-    movie_id = movie['id']
-
-    # Get detailed movie info with credits and release dates (for age rating)
+def fetch_movie_details_by_id(movie_id):
     details_url = f"https://api.themoviedb.org/3/movie/{movie_id}?api_key={TMDB_API_KEY}&append_to_response=credits,release_dates"
-    details = requests.get(details_url).json()
+    return requests.get(details_url).json()
 
+def parse_movie_details(details):
     genres = ', '.join([g['name'] for g in details.get('genres', [])])
     runtime = details.get('runtime', 'N/A')
     release_year = details.get('release_date', '')[:4]
     directors = [c['name'] for c in details['credits']['crew'] if c['job'] == 'Director']
     actors = [a['name'] for a in details['credits']['cast'][:3]]
 
-    # Get US age certification
     certification = 'N/A'
     release_dates_data = details.get('release_dates', {}).get('results', [])
     for country_info in release_dates_data:
@@ -95,28 +104,30 @@ def fetch_movie_details(title):
         'directors': ', '.join(directors) if directors else 'N/A',
         'actors': ', '.join(actors) if actors else 'N/A',
         'age_rating': certification
-    }, None
+    }
 
-# ======== Slash command to rate a movie ========
-@bot.tree.command(name="rate", description="Rate a movie")
-@app_commands.describe(title="Movie title to rate", rating="Rating from 0 to 5")
-async def rate_command(interaction: discord.Interaction, title: str, rating: float):
-    if rating < 0 or rating > 5:
-        await interaction.response.send_message("Please provide a rating between 0 and 5.", ephemeral=True)
-        return
-
-    await interaction.response.defer()  # Acknowledge the command
-
-    movie, options = fetch_movie_details(title)
-    if options:
-        # Multiple possible movies found, ask user to specify
-        msg_options = "\n".join([f"{idx+1}. {opt[0]} ({opt[1]})" for idx, opt in enumerate(options)])
-        await interaction.followup.send(f"Multiple movies match your query. Please be more specific or select one:\n{msg_options}")
-        return
-
-    if not movie:
+async def handle_movie_selection(interaction, title, rating):
+    results = fetch_movie_search_results(title)
+    if not results:
         await interaction.followup.send(f"Sorry, could not find movie '{title}'.")
         return
+
+    scored_results = choose_best_movie(title, results)
+
+    # If best score is low or ambiguous, show dropdown select
+    if scored_results[0][0] < 75 or (len(scored_results) > 1 and scored_results[0][0] - scored_results[1][0] < 5):
+        select_options = [
+            discord.SelectOption(label=m['title'], description=f"Year: {m.get('release_date', '')[:4]}")
+            for _, m in scored_results[:5]
+        ]
+        view = MovieSelectView(select_options, interaction)
+        await interaction.followup.send("Multiple possible movies found. Please select the correct one:", view=view, ephemeral=True)
+        return
+
+    # Otherwise, proceed with the top matched movie
+    movie_id = scored_results[0][1]['id']
+    details = fetch_movie_details_by_id(movie_id)
+    movie = parse_movie_details(details)
 
     watch_date = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
 
@@ -131,8 +142,19 @@ async def rate_command(interaction: discord.Interaction, title: str, rating: flo
         movie['actors'],
         movie['age_rating']
     ])
-
     await interaction.followup.send(f"Your rating of {rating}/5 for '{movie['title']}' (Age Rating: {movie['age_rating']}) has been recorded!")
+
+# ======== Slash command to rate a movie ========
+@bot.tree.command(name="rate", description="Rate a movie")
+@app_commands.describe(title="Movie title to rate", rating="Rating from 0 to 5")
+async def rate_command(interaction: discord.Interaction, title: str, rating: float):
+    if rating < 0 or rating > 5:
+        await interaction.response.send_message("Please provide a rating between 0 and 5.", ephemeral=True)
+        return
+
+    await interaction.response.defer()
+
+    await handle_movie_selection(interaction, title, rating)
 
 # ======== Run the bot ========
 bot.run(DISCORD_BOT_TOKEN)
