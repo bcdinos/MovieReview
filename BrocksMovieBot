@@ -10,7 +10,7 @@ import os
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 TMDB_API_KEY = os.getenv('TMDB_API_KEY')
 GOOGLE_CREDS_FILE = 'google-creds.json'  # Keep this file local, do not push to GitHub!
-GOOGLE_SHEET_NAME = 'Your Google Sheet Name'  # Replace with your actual sheet name
+GOOGLE_SHEET_NAME = 'Brocks Movie Review'
 
 # ======== Setup Google Sheets client ========
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
