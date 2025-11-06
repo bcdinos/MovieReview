@@ -7,6 +7,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 import os
 
+from rapidfuzz import fuzz
+
 # ======== Configuration ========
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 TMDB_API_KEY = os.getenv('TMDB_API_KEY')
@@ -27,21 +29,44 @@ class MyBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        # Sync the command tree (register slash commands)
+        # Sync the command tree to register slash commands
         await self.tree.sync()
 
 bot = MyBot()
 
-# ======== Function to fetch movie details ========
+# ======== Improved fetch movie details with fuzzy matching and age rating ========
 def fetch_movie_details(title):
     search_url = f"https://api.themoviedb.org/3/search/movie?api_key={TMDB_API_KEY}&query={title}"
     response = requests.get(search_url).json()
-    if not response['results']:
-        return None
-    movie = response['results'][0]
+    results = response.get('results', [])
+
+    if not results:
+        return None, None
+
+    # Use fuzzy matching to find closest title match
+    scored_results = []
+    lower_title = title.lower()
+
+    for movie in results:
+        candidate_title = movie.get('title', '').lower()
+        score = fuzz.ratio(lower_title, candidate_title)
+        scored_results.append((score, movie))
+
+    # Sort descending by score
+    scored_results.sort(key=lambda x: x[0], reverse=True)
+
+    # If top score is low, return multiple options for clarification
+    if scored_results[0][0] < 70:  # threshold 70 can be tuned
+        # return none and list of options
+        options = [(m['title'], m.get('release_date', '')[:4]) for s,m in scored_results[:5]]
+        return None, options
+
+    # Use top scored movie
+    movie = scored_results[0][1]
     movie_id = movie['id']
 
-    details_url = f"https://api.themoviedb.org/3/movie/{movie_id}?api_key={TMDB_API_KEY}&append_to_response=credits"
+    # Get detailed movie info with credits and release dates (for age rating)
+    details_url = f"https://api.themoviedb.org/3/movie/{movie_id}?api_key={TMDB_API_KEY}&append_to_response=credits,release_dates"
     details = requests.get(details_url).json()
 
     genres = ', '.join([g['name'] for g in details.get('genres', [])])
@@ -50,14 +75,27 @@ def fetch_movie_details(title):
     directors = [c['name'] for c in details['credits']['crew'] if c['job'] == 'Director']
     actors = [a['name'] for a in details['credits']['cast'][:3]]
 
+    # Get US age certification
+    certification = 'N/A'
+    release_dates_data = details.get('release_dates', {}).get('results', [])
+    for country_info in release_dates_data:
+        if country_info.get('iso_3166_1') == 'US':
+            for release in country_info.get('release_dates', []):
+                if release.get('certification'):
+                    certification = release['certification']
+                    break
+            if certification != 'N/A':
+                break
+
     return {
         'title': details.get('title', 'N/A'),
         'genre': genres,
         'runtime': runtime,
         'release_year': release_year,
         'directors': ', '.join(directors) if directors else 'N/A',
-        'actors': ', '.join(actors) if actors else 'N/A'
-    }
+        'actors': ', '.join(actors) if actors else 'N/A',
+        'age_rating': certification
+    }, None
 
 # ======== Slash command to rate a movie ========
 @bot.tree.command(name="rate", description="Rate a movie")
@@ -67,9 +105,15 @@ async def rate_command(interaction: discord.Interaction, title: str, rating: flo
         await interaction.response.send_message("Please provide a rating between 0 and 5.", ephemeral=True)
         return
 
-    await interaction.response.defer()  # Acknowledge the command to avoid timeout
+    await interaction.response.defer()  # Acknowledge the command
 
-    movie = fetch_movie_details(title)
+    movie, options = fetch_movie_details(title)
+    if options:
+        # Multiple possible movies found, ask user to specify
+        msg_options = "\n".join([f"{idx+1}. {opt[0]} ({opt[1]})" for idx, opt in enumerate(options)])
+        await interaction.followup.send(f"Multiple movies match your query. Please be more specific or select one:\n{msg_options}")
+        return
+
     if not movie:
         await interaction.followup.send(f"Sorry, could not find movie '{title}'.")
         return
@@ -84,10 +128,11 @@ async def rate_command(interaction: discord.Interaction, title: str, rating: flo
         watch_date,
         movie['release_year'],
         movie['directors'],
-        movie['actors']
+        movie['actors'],
+        movie['age_rating']
     ])
 
-    await interaction.followup.send(f"Your rating of {rating}/5 for '{movie['title']}' has been recorded!")
+    await interaction.followup.send(f"Your rating of {rating}/5 for '{movie['title']}' (Age Rating: {movie['age_rating']}) has been recorded!")
 
 # ======== Run the bot ========
 bot.run(DISCORD_BOT_TOKEN)
