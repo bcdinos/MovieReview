@@ -74,13 +74,13 @@ def get_movie_details(movie_id):
     }
 
 def check_watchlist_fuzzy(movie_title, watchlist_data):
-    """Fuzzy match against watchlist titles in Google Sheet"""
+    """Fuzzy match against watchlist titles in Google Sheet - FIXED"""
     titles = [row[0].strip().lower() for row in watchlist_data[1:] if row and row[0]]
     
     if not titles:
         return False, None, 0
     
-    best_match, score = process.extractOne(movie_title.lower(), titles, scorer=fuzz.ratio)
+    best_match, score, _ = process.extractOne(movie_title.lower(), titles, scorer=fuzz.ratio)  # FIXED unpack
     return score > 85, best_match, score
 
 intents = discord.Intents.default()
@@ -134,7 +134,7 @@ async def rate_movie(interaction: discord.Interaction, movie: str, rating: app_c
         await interaction.followup.send("❌ No movie found matching that title.", ephemeral=True)
         return
     
-    # Check if only 1 good match
+    # Check if only 1 good match (>90% confidence)
     best_score, best_movie = movie_options[0]
     if best_score > 90 and len(movie_options) == 1:
         movie_data = get_movie_details(best_movie['id'])
@@ -172,18 +172,17 @@ async def rate_movie(interaction: discord.Interaction, movie: str, rating: app_c
         )
         return
     
-    # Multiple options → Dropdown
+    # Multiple options → Clean dropdown (title + year only)
     options = []
     for i, (score, movie_data) in enumerate(movie_options[:5], 1):
         option = SelectOption(
-            label=f"{movie_data['title']} ({movie_data.get('release_date', '')[:4]})",
-            value=str(movie_data['id']),
-            description=f"Score: {int(score)}% | {movie_data.get('popularity', 0):.0f} pop"
+            label=f"{movie_data['title']} ({movie_data.get('release_date', '')[:4]})",  # CLEAN: No scores
+            value=str(movie_data['id'])
         )
         options.append(option)
     
     view = MovieSelect(movie_options, interaction, rating=rating, is_watchlist=False)
-    view.select_movie.options = options  # ← FIXED LINE
+    view.select_movie.options = options  # FIXED: No .select
     
     embed = discord.Embed(title=f"Select {movie} ({len(options)} matches)", color=0x00ff00)
     embed.add_field(name="Instructions", value="Choose the correct movie from the dropdown.", inline=False)
@@ -264,18 +263,17 @@ async def add_watchlist(interaction: discord.Interaction, movie: str):
         await interaction.followup.send(f"✅ **{movie_data['title']}** added to watchlist!")
         return
     
-    # Dropdown for multiple matches
+    # Dropdown for multiple matches (title + year only)
     options = []
     for i, (score, movie_data) in enumerate(movie_options[:5], 1):
         option = SelectOption(
-            label=f"{movie_data['title']} ({movie_data.get('release_date', '')[:4]})",
-            value=str(movie_data['id']),
-            description=f"Score: {int(score)}%"
+            label=f"{movie_data['title']} ({movie_data.get('release_date', '')[:4]})",  # CLEAN: No scores
+            value=str(movie_data['id'])
         )
         options.append(option)
     
     view = MovieSelect(movie_options, interaction, is_watchlist=True)
-    view.select_movie.options = options  # ← FIXED LINE
+    view.select_movie.options = options  # FIXED: No .select
     
     embed = discord.Embed(title=f"Select movie to add to watchlist", color=0x0099ff)
     embed.add_field(name="Instructions", value="Choose from dropdown below.", inline=False)
