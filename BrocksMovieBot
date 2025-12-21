@@ -70,7 +70,8 @@ def get_movie_details(movie_id):
         'release_year': details.get('release_date', '')[:4],
         'age_rating': age_rating,
         'directors': ', '.join(directors) or 'N/A',
-        'actors': ', '.join(actors) or 'N/A'
+        'actors': ', '.join(actors) or 'N/A',
+        'runtime': f"{details.get('runtime', 0)} min" if details.get('runtime') else 'N/A'
     }
 
 def check_watchlist_fuzzy(movie_title, watchlist_data):
@@ -80,7 +81,7 @@ def check_watchlist_fuzzy(movie_title, watchlist_data):
     if not titles:
         return False, None, 0
     
-    best_match, score, _ = process.extractOne(movie_title.lower(), titles, scorer=fuzz.ratio)  # FIXED unpack
+    best_match, score, _ = process.extractOne(movie_title.lower(), titles, scorer=fuzz.ratio)
     return score > 85, best_match, score
 
 intents = discord.Intents.default()
@@ -155,12 +156,18 @@ async def rate_movie(interaction: discord.Interaction, movie: str, rating: app_c
             )
             return
         
-        # Log rating
+        # Log rating - PERFECT COLUMN ORDER
         reviews_sheet = spreadsheet.worksheet("Ratings")
         reviews_sheet.append_row([
-            movie_data['title'], movie_data['release_year'], rating, movie_data['age_rating'],
-            movie_data['directors'], movie_data['actors'], interaction.user.display_name,
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            movie_data['title'],                    # A: Title
+            'N/A',                                  # B: Genre
+            rating,                                 # C: Rating (of 5)
+            movie_data['runtime'],                  # D: Runtime
+            datetime.now().strftime("%Y-%m-%d"),    # E: Watch Date
+            movie_data['release_year'],             # F: Release Year
+            movie_data['directors'],                # G: Directors
+            movie_data['actors'],                   # H: Actors
+            movie_data['age_rating']                # I: Age Rating
         ])
         
         await interaction.followup.send(
@@ -176,13 +183,13 @@ async def rate_movie(interaction: discord.Interaction, movie: str, rating: app_c
     options = []
     for i, (score, movie_data) in enumerate(movie_options[:5], 1):
         option = SelectOption(
-            label=f"{movie_data['title']} ({movie_data.get('release_date', '')[:4]})",  # CLEAN: No scores
+            label=f"{movie_data['title']} ({movie_data.get('release_date', '')[:4]})",
             value=str(movie_data['id'])
         )
         options.append(option)
     
     view = MovieSelect(movie_options, interaction, rating=rating, is_watchlist=False)
-    view.select_movie.options = options  # FIXED: No .select
+    view.select_movie.options = options
     
     embed = discord.Embed(title=f"Select {movie} ({len(options)} matches)", color=0x00ff00)
     embed.add_field(name="Instructions", value="Choose the correct movie from the dropdown.", inline=False)
@@ -213,12 +220,18 @@ async def rate_movie(interaction: discord.Interaction, movie: str, rating: app_c
         )
         return
     
-    # Log rating
+    # Log rating - PERFECT COLUMN ORDER
     reviews_sheet = spreadsheet.worksheet("Ratings")
     reviews_sheet.append_row([
-        movie_data['title'], movie_data['release_year'], view.rating, movie_data['age_rating'],
-        movie_data['directors'], movie_data['actors'], interaction.user.display_name,
-        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        movie_data['title'],                    # A: Title
+        'N/A',                                  # B: Genre
+        view.rating,                            # C: Rating (of 5)
+        movie_data['runtime'],                  # D: Runtime
+        datetime.now().strftime("%Y-%m-%d"),    # E: Watch Date
+        movie_data['release_year'],             # F: Release Year
+        movie_data['directors'],                # G: Directors
+        movie_data['actors'],                   # H: Actors
+        movie_data['age_rating']                # I: Age Rating
     ])
     
     embed = discord.Embed(title=f"✅ Rating Recorded!", color=0x00ff00)
@@ -259,7 +272,11 @@ async def add_watchlist(interaction: discord.Interaction, movie: str):
             )
             return
         
-        watchlist_sheet.append_row([movie_data['title'], datetime.now().strftime("%Y-%m-%d")])
+        # PERFECT 2-COLUMN WATCHLIST
+        watchlist_sheet.append_row([
+            movie_data['title'],                    # A: Movie Title
+            datetime.now().strftime("%Y-%m-%d")     # B: Date Added
+        ])
         await interaction.followup.send(f"✅ **{movie_data['title']}** added to watchlist!")
         return
     
@@ -267,13 +284,13 @@ async def add_watchlist(interaction: discord.Interaction, movie: str):
     options = []
     for i, (score, movie_data) in enumerate(movie_options[:5], 1):
         option = SelectOption(
-            label=f"{movie_data['title']} ({movie_data.get('release_date', '')[:4]})",  # CLEAN: No scores
+            label=f"{movie_data['title']} ({movie_data.get('release_date', '')[:4]})",
             value=str(movie_data['id'])
         )
         options.append(option)
     
     view = MovieSelect(movie_options, interaction, is_watchlist=True)
-    view.select_movie.options = options  # FIXED: No .select
+    view.select_movie.options = options
     
     embed = discord.Embed(title=f"Select movie to add to watchlist", color=0x0099ff)
     embed.add_field(name="Instructions", value="Choose from dropdown below.", inline=False)
@@ -303,7 +320,11 @@ async def add_watchlist(interaction: discord.Interaction, movie: str):
         )
         return
     
-    watchlist_sheet.append_row([movie_data['title'], datetime.now().strftime("%Y-%m-%d")])
+    # PERFECT 2-COLUMN WATCHLIST
+    watchlist_sheet.append_row([
+        movie_data['title'],                    # A: Movie Title
+        datetime.now().strftime("%Y-%m-%d")     # B: Date Added
+    ])
     await interaction.edit_original_response(content=f"✅ **{movie_data['title']}** added to watchlist!", view=None)
 
 bot.run(DISCORD_BOT_TOKEN)
