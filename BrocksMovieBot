@@ -1,5 +1,5 @@
 import discord
-from discord import app_commands
+from discord import app_commands, SelectOption
 from discord.ext import commands
 import requests
 import gspread
@@ -35,46 +35,47 @@ def fetch_movie_details(title):
         candidate_title = movie.get('title', '').lower()
         similarity = fuzz.ratio(title.lower(), candidate_title)
         popularity = movie.get('popularity', 0)
-        combined_score = similarity * 0.7 + popularity * 30  # Weight popularity
-        
+        combined_score = similarity * 0.7 + popularity * 30
         scored_results.append((combined_score, movie))
     
-    # Best match above threshold
-    best_score, best_movie = max(scored_results)
-    if best_score > 75:
-        movie_id = best_movie['id']
-        detail_url = f"https://api.themoviedb.org/3/movie/{movie_id}?api_key={TMDB_API_KEY}&language=en-US&append_to_response=credits,release_dates"
-        detail_response = requests.get(detail_url)
-        
-        if detail_response.status_code == 200:
-            details = detail_response.json()
-            
-            # Extract age rating (US MPAA)
-            age_rating = 'N/A'
-            release_dates = details.get('release_dates', {}).get('results', [])
-            for date_info in release_dates:
-                if date_info.get('iso_3166_1') == 'US':
-                    certification = date_info.get('certification', '')
-                    if certification:
-                        age_rating = certification
-                        break
-            
-            # Directors/actors
-            directors = [crew['name'] for crew in details.get('credits', {}).get('crew', []) if crew['job'] == 'Director'][:2]
-            actors = [cast['name'] for cast in details.get('credits', {}).get('cast', [])][:3]
-            
-            return {
-                'title': details.get('title'),
-                'release_year': details.get('release_date', '')[:4],
-                'age_rating': age_rating,
-                'directors': ', '.join(directors) or 'N/A',
-                'actors': ', '.join(actors) or 'N/A'
-            }
-    return None
+    scored_results.sort(reverse=True)
+    return scored_results[:5]  # Top 5 matches
+
+def get_movie_details(movie_id):
+    """Get full details for specific movie ID"""
+    detail_url = f"https://api.themoviedb.org/3/movie/{movie_id}?api_key={TMDB_API_KEY}&language=en-US&append_to_response=credits,release_dates"
+    response = requests.get(detail_url)
+    
+    if response.status_code != 200:
+        return None
+    
+    details = response.json()
+    
+    # Extract age rating (US MPAA)
+    age_rating = 'N/A'
+    release_dates = details.get('release_dates', {}).get('results', [])
+    for date_info in release_dates:
+        if date_info.get('iso_3166_1') == 'US':
+            certification = date_info.get('certification', '')
+            if certification:
+                age_rating = certification
+                break
+    
+    # Directors/actors
+    directors = [crew['name'] for crew in details.get('credits', {}).get('crew', []) if crew['job'] == 'Director'][:2]
+    actors = [cast['name'] for cast in details.get('credits', {}).get('cast', [])][:3]
+    
+    return {
+        'title': details.get('title'),
+        'release_year': details.get('release_date', '')[:4],
+        'age_rating': age_rating,
+        'directors': ', '.join(directors) or 'N/A',
+        'actors': ', '.join(actors) or 'N/A'
+    }
 
 def check_watchlist_fuzzy(movie_title, watchlist_data):
     """Fuzzy match against watchlist titles in Google Sheet"""
-    titles = [row[0].strip().lower() for row in watchlist_data[1:] if row and row[0]]  # Skip header
+    titles = [row[0].strip().lower() for row in watchlist_data[1:] if row and row[0]]
     
     if not titles:
         return False, None, 0
@@ -95,78 +96,216 @@ async def on_ready():
     except Exception as e:
         print(f'Failed to sync: {e}')
 
+class MovieSelect(discord.ui.View):
+    def __init__(self, movie_options, interaction, rating=None, is_watchlist=False):
+        super().__init__(timeout=60)
+        self.movie_options = movie_options
+        self.interaction = interaction
+        self.rating = rating
+        self.is_watchlist = is_watchlist
+        self.selected_movie = None
+
+    @discord.ui.select(placeholder="Select a movie...", min_values=1, max_values=1)
+    async def select_movie(self, interaction: discord.Interaction, select: discord.ui.Select):
+        await interaction.response.defer()
+        selected_value = select.values[0]
+        self.selected_movie = next(movie for score, movie in self.movie_options if str(movie['id']) == selected_value)
+        self.stop()
+
+    async def on_timeout(self):
+        try:
+            await self.interaction.edit_original_response(content="⏰ Selection timed out.", view=None)
+        except:
+            pass
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user != self.interaction.user:
+            await interaction.response.send_message("❌ This selection is not for you!", ephemeral=True)
+            return False
+        return True
+
 @bot.tree.command(name="rate", description="Rate a movie (0-5 stars)")
 @app_commands.describe(movie="Movie title", rating="Rating 0-5")
 async def rate_movie(interaction: discord.Interaction, movie: str, rating: app_commands.Range[float, 0.0, 5.0]):
     await interaction.response.defer()
     
-    # Fetch movie details from TMDb
-    movie_data = fetch_movie_details(movie)
-    if not movie_data:
+    movie_options = fetch_movie_details(movie)
+    if not movie_options:
         await interaction.followup.send("❌ No movie found matching that title.", ephemeral=True)
         return
     
-    # Open sheets
-    spreadsheet = client.open("Movie Reviews")  # Change to your sheet name
-    watchlist_sheet = spreadsheet.worksheet("Watchlist")  # Watchlist tab
-    reviews_sheet = spreadsheet.worksheet("Sheet1")  # Reviews tab
+    # Check if only 1 good match
+    best_score, best_movie = movie_options[0]
+    if best_score > 90 and len(movie_options) == 1:
+        movie_data = get_movie_details(best_movie['id'])
+        if not movie_data:
+            await interaction.followup.send("❌ Could not fetch movie details.", ephemeral=True)
+            return
+        
+        # Quick watchlist check
+        spreadsheet = client.open("Brocks Movie Review")
+        watchlist_sheet = spreadsheet.worksheet("Watchlists")
+        watchlist_data = watchlist_sheet.get_all_values()
+        is_on_watchlist, match_title, confidence = check_watchlist_fuzzy(movie_data['title'], watchlist_data)
+        
+        if is_on_watchlist:
+            await interaction.followup.send(
+                f"⚠️ **'{movie_data['title']}'** already on watchlist as **'{match_title.title()}'** (confidence: {int(confidence)}%)", 
+                ephemeral=True
+            )
+            return
+        
+        # Log rating
+        reviews_sheet = spreadsheet.worksheet("Ratings")
+        reviews_sheet.append_row([
+            movie_data['title'], movie_data['release_year'], rating, movie_data['age_rating'],
+            movie_data['directors'], movie_data['actors'], interaction.user.display_name,
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ])
+        
+        await interaction.followup.send(
+            f"✅ **{movie_data['title']}** ({movie_data['release_year']}) rated **{rating}/5** "
+            f"(Age Rating: {movie_data['age_rating']})\n"
+            f"**Directors:** {movie_data['directors']}\n"
+            f"**Actors:** {movie_data['actors']}\n\n"
+            f"Recorded in your Google Sheet!"
+        )
+        return
     
-    # Check watchlist with fuzzy matching
+    # Multiple options → Dropdown
+    options = []
+    for i, (score, movie_data) in enumerate(movie_options[:5], 1):
+        option = SelectOption(
+            label=f"{movie_data['title']} ({movie_data.get('release_date', '')[:4]})",
+            value=str(movie_data['id']),
+            description=f"Score: {int(score)}% | {movie_data.get('popularity', 0):.0f} pop"
+        )
+        options.append(option)
+    
+    view = MovieSelect(movie_options, interaction, rating=rating, is_watchlist=False)
+    view.select_movie.select.options = options
+    
+    embed = discord.Embed(title=f"Select {movie} ({len(options)} matches)", color=0x00ff00)
+    embed.add_field(name="Instructions", value="Choose the correct movie from the dropdown.", inline=False)
+    
+    await interaction.followup.send(embed=embed, view=view)
+    
+    await view.wait()
+    
+    if not view.selected_movie:
+        await interaction.edit_original_response(content="❌ No movie selected.", view=None)
+        return
+    
+    movie_data = get_movie_details(view.selected_movie['id'])
+    if not movie_data:
+        await interaction.edit_original_response(content="❌ Could not fetch movie details.", view=None)
+        return
+    
+    # Watchlist check
+    spreadsheet = client.open("Brocks Movie Review")
+    watchlist_sheet = spreadsheet.worksheet("Watchlists")
     watchlist_data = watchlist_sheet.get_all_values()
     is_on_watchlist, match_title, confidence = check_watchlist_fuzzy(movie_data['title'], watchlist_data)
     
     if is_on_watchlist:
-        await interaction.followup.send(
-            f"⚠️ **'{movie_data['title']}'** already on watchlist as **'{match_title.title()}'** (confidence: {int(confidence)}%)", 
-            ephemeral=True
+        await interaction.edit_original_response(
+            content=f"⚠️ **'{movie_data['title']}'** already on watchlist as **'{match_title.title()}'**!", 
+            view=None
         )
         return
     
-    # Log to reviews sheet
+    # Log rating
+    reviews_sheet = spreadsheet.worksheet("Ratings")
     reviews_sheet.append_row([
-        movie_data['title'],
-        movie_data['release_year'],
-        rating,
-        movie_data['age_rating'],
-        movie_data['directors'],
-        movie_data['actors'],
-        interaction.user.display_name,
+        movie_data['title'], movie_data['release_year'], view.rating, movie_data['age_rating'],
+        movie_data['directors'], movie_data['actors'], interaction.user.display_name,
         datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     ])
     
-    await interaction.followup.send(
-        f"✅ **{movie_data['title']}** ({movie_data['release_year']}) rated **{rating}/5** "
-        f"(Age Rating: {movie_data['age_rating']})\n"
-        f"**Directors:** {movie_data['directors']}\n"
-        f"**Actors:** {movie_data['actors']}\n\n"
-        f"Recorded in your Google Sheet!"
-    )
+    embed = discord.Embed(title=f"✅ Rating Recorded!", color=0x00ff00)
+    embed.add_field(name=movie_data['title'], value=f"{movie_data['release_year']} • {view.rating}/5", inline=True)
+    embed.add_field(name="Age Rating", value=movie_data['age_rating'], inline=True)
+    embed.add_field(name="Directors", value=movie_data['directors'], inline=False)
+    embed.add_field(name="Actors", value=movie_data['actors'], inline=False)
+    
+    await interaction.edit_original_response(embed=embed, view=None)
 
 @bot.tree.command(name="watchlist", description="Add movie to watchlist")
 @app_commands.describe(movie="Movie to add to watchlist")
 async def add_watchlist(interaction: discord.Interaction, movie: str):
     await interaction.response.defer()
     
-    movie_data = fetch_movie_details(movie)
-    if not movie_data:
+    movie_options = fetch_movie_details(movie)
+    if not movie_options:
         await interaction.followup.send("❌ No movie found matching that title.", ephemeral=True)
         return
     
-    spreadsheet = client.open("Movie Reviews")
-    watchlist_sheet = spreadsheet.worksheet("Watchlist")
+    # Single good match
+    best_score, best_movie = movie_options[0]
+    if best_score > 90 and len(movie_options) == 1:
+        movie_data = get_movie_details(best_movie['id'])
+        if not movie_data:
+            await interaction.followup.send("❌ Could not fetch movie details.", ephemeral=True)
+            return
+        
+        spreadsheet = client.open("Brocks Movie Review")
+        watchlist_sheet = spreadsheet.worksheet("Watchlists")
+        watchlist_data = watchlist_sheet.get_all_values()
+        
+        is_on_watchlist, match_title, confidence = check_watchlist_fuzzy(movie_data['title'], watchlist_data)
+        if is_on_watchlist:
+            await interaction.followup.send(
+                f"✅ **'{movie_data['title']}'** already on watchlist as **'{match_title.title()}'**!", 
+                ephemeral=True
+            )
+            return
+        
+        watchlist_sheet.append_row([movie_data['title'], datetime.now().strftime("%Y-%m-%d")])
+        await interaction.followup.send(f"✅ **{movie_data['title']}** added to watchlist!")
+        return
     
+    # Dropdown for multiple matches
+    options = []
+    for i, (score, movie_data) in enumerate(movie_options[:5], 1):
+        option = SelectOption(
+            label=f"{movie_data['title']} ({movie_data.get('release_date', '')[:4]})",
+            value=str(movie_data['id']),
+            description=f"Score: {int(score)}%"
+        )
+        options.append(option)
+    
+    view = MovieSelect(movie_options, interaction, is_watchlist=True)
+    view.select_movie.select.options = options
+    
+    embed = discord.Embed(title=f"Select movie to add to watchlist", color=0x0099ff)
+    embed.add_field(name="Instructions", value="Choose from dropdown below.", inline=False)
+    
+    await interaction.followup.send(embed=embed, view=view)
+    
+    await view.wait()
+    
+    if not view.selected_movie:
+        await interaction.edit_original_response(content="❌ No movie selected.", view=None)
+        return
+    
+    movie_data = get_movie_details(view.selected_movie['id'])
+    if not movie_data:
+        await interaction.edit_original_response(content="❌ Could not fetch movie details.", view=None)
+        return
+    
+    spreadsheet = client.open("Brocks Movie Review")
+    watchlist_sheet = spreadsheet.worksheet("Watchlists")
     watchlist_data = watchlist_sheet.get_all_values()
-    is_on_watchlist, match_title, confidence = check_watchlist_fuzzy(movie_data['title'], watchlist_data)
     
+    is_on_watchlist, match_title, confidence = check_watchlist_fuzzy(movie_data['title'], watchlist_data)
     if is_on_watchlist:
-        await interaction.followup.send(
-            f"✅ **'{movie_data['title']}'** already on watchlist as **'{match_title.title()}'**!", 
-            ephemeral=True
+        await interaction.edit_original_response(
+            content=f"✅ **'{movie_data['title']}'** already on watchlist as **'{match_title.title()}'**!", 
+            view=None
         )
         return
     
-    # Add to watchlist
     watchlist_sheet.append_row([movie_data['title'], datetime.now().strftime("%Y-%m-%d")])
-    await interaction.followup.send(f"✅ **{movie_data['title']}** added to watchlist!")
+    await interaction.edit_original_response(content=f"✅ **{movie_data['title']}** added to watchlist!", view=None)
 
 bot.run(DISCORD_BOT_TOKEN)
