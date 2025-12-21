@@ -20,7 +20,7 @@ GOOGLE_SHEET_NAME = 'Brocks Movie Review'
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDS_FILE, scope)
 client = gspread.authorize(creds)
-sheet = client.open(GOOGLE_SHEET_NAME).sheet1
+sheet = client.open(GOOGLE_SHEET_NAME).Ratings
 
 # ======== Define bot class with intents ========
 class MyBot(commands.Bot):
