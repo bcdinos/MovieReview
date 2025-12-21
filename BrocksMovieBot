@@ -19,7 +19,7 @@ GOOGLE_SHEET_NAME = 'Brocks Movie Review'
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDS_FILE, scope)
 client = gspread.authorize(creds)
-sheet = client.open(GOOGLE_SHEET_NAME).worksheet('Ratings')
+sheet = client.open(GOOGLE_SHEET_NAME).worksheet('Ratings')  # your ratings tab name
 
 # ======== Define bot class with intents ========
 class MyBot(commands.Bot):
@@ -37,7 +37,7 @@ bot = MyBot()
 class MovieSelect(Select):
     def __init__(self, options, rating):
         super().__init__(placeholder="Choose a movie...", min_values=1, max_values=1, options=options)
-        self.rating = rating
+        self.rating = rating  # store rating to use on selection
 
     async def callback(self, interaction: discord.Interaction):
         selected_movie_id = int(self.values[0])
@@ -58,7 +58,10 @@ class MovieSelect(Select):
             movie['age_rating']
         ])
 
-        await interaction.response.edit_message(content=f"Your rating of {self.rating}/5 for '{movie['title']}' recorded successfully!", view=None)
+        await interaction.response.edit_message(
+            content=f"Your rating of {self.rating}/5 for '{movie['title']}' recorded successfully!",
+            view=None
+        )
 
 class MovieSelectView(View):
     def __init__(self, options, rating):
@@ -93,8 +96,8 @@ def parse_movie_details(details):
     genres = ', '.join([g['name'] for g in details.get('genres', [])])
     runtime = details.get('runtime', 'N/A')
     release_year = details.get('release_date', '')[:4]
-    directors = [c['name'] for c in details['credits']['crew'] if c['job'] == 'Director']
-    actors = [a['name'] for a in details['credits']['cast'][:3]]
+    directors = [c['name'] for c in details.get('credits', {}).get('crew', []) if c.get('job') == 'Director']
+    actors = [a['name'] for a in details.get('credits', {}).get('cast', [])[:3]]
 
     certification = 'N/A'
     release_dates_data = details.get('release_dates', {}).get('results', [])
@@ -134,7 +137,11 @@ async def handle_movie_selection(interaction, title, rating):
             for _, m in scored_results[:5]
         ]
         view = MovieSelectView(select_options, rating)
-        await interaction.followup.send("Multiple possible movies found. Please select the correct one:", view=view, ephemeral=True)
+        await interaction.followup.send(
+            "Multiple possible movies found. Please select the correct one:",
+            view=view,
+            ephemeral=True
+        )
         return
 
     movie_id = scored_results[0][1]['id']
@@ -154,7 +161,9 @@ async def handle_movie_selection(interaction, title, rating):
         movie['actors'],
         movie['age_rating']
     ])
-    await interaction.followup.send(f"Your rating of {rating}/5 for '{movie['title']}' (Age Rating: {movie['age_rating']}) has been recorded!")
+    await interaction.followup.send(
+        f"Your rating of {rating}/5 for '{movie['title']}' (Age Rating: {movie['age_rating']}) has been recorded!"
+    )
 
 # ======== Rate Command ========
 @bot.tree.command(name="rate", description="Rate a movie")
@@ -167,69 +176,86 @@ async def rate_command(interaction: discord.Interaction, title: str, rating: flo
     await interaction.response.defer()
     await handle_movie_selection(interaction, title, rating)
 
-# ======== WATCHLIST Commands ========
-@bot.tree.command(name="watchlist", description="Manage your watchlist")
-@app_commands.describe(action="add/list/remove/mark", movie="Movie name")
-async def watchlist(interaction: discord.Interaction, action: str, movie: str = None):
+# ======== WATCHLIST COMMANDS (SIMPLE) ========
+
+@bot.tree.command(name="watchlists", description="Add a movie to your watchlist")
+@app_commands.describe(movie="Movie title to add to your watchlist")
+async def watchlists_command(interaction: discord.Interaction, movie: str):
+    """Adds a movie to the Watchlists sheet given a title."""
     await interaction.response.defer(ephemeral=True)
-    
-    # Open Watchlists tab
-    watchlist_sheet = client.open(GOOGLE_SHEET_NAME).worksheet('Watchlists')
-    
-    if action == "add" and movie:
-        results = fetch_movie_search_results(movie)
-        if not results:
-            await interaction.followup.send("❌ No movies found!")
-            return
-        
-        scored_results = choose_best_movie(movie, results)
-        movie_id = scored_results[0][1]['id']
-        details = fetch_movie_details_by_id(movie_id)
-        movie = parse_movie_details(details)
-        
-        watchlist_sheet.append_row([
-            movie['title'], movie['release_year'], movie['directors'],
-            movie['actors'], '',  # Empty Rating
-            datetime.now().strftime('%Y-%m-%d %H:%M'), 'Pending'
-        ])
-        await interaction.followup.send(f"✅ Added **{movie['title']}** to watchlist!")
-    
-    elif action == "list":
-        records = watchlist_sheet.get_all_records()
-        if not records:
-            await interaction.followup.send("Watchlist empty! `/watchlist add <movie>`")
-            return
-        
-        embed = discord.Embed(title=f"Watchlist ({len(records)} movies)")
-        for movie_data in records[:10]:
-            status = "🟡 Pending" if movie_data['Status'] == 'Pending' else "✅ Watched"
-            rating = movie_data['Rating'] if movie_data['Rating'] else "No rating"
-            embed.add_field(
-                name=f"{movie_data['Movie Title']} ({movie_data['Year']}) {status}",
-                value=f"{movie_data['Directors'][:50]}... | {rating}", inline=False
-            )
-        await interaction.followup.send(embed=embed)
-    
-    elif action == "remove" and movie:
-        records = watchlist_sheet.get_all_records()
-        for i, row in enumerate(records):
-            if movie.lower() in row['Movie Title'].lower():
-                watchlist_sheet.delete_rows(i+2)
-                await interaction.followup.send(f"✅ Removed **{row['Movie Title']}**!")
-                return
-        await interaction.followup.send("❌ Movie not found!")
-    
-    elif action == "mark" and movie:
-        records = watchlist_sheet.get_all_records()
-        for i, row in enumerate(records):
-            if movie.lower() in row['Movie Title'].lower():
-                watchlist_sheet.update_cell(i+2, 7, 'Watched')
-                await interaction.followup.send(f"✅ Marked **{row['Movie Title']}** as Watched!")
-                return
-        await interaction.followup.send("❌ Movie not found!")
-    
-    else:
-        await interaction.followup.send("Use: `/watchlist add <movie>`, `/watchlist list`, `/watchlist remove <movie>`, `/watchlist mark <movie>`")
+
+    # Open the Watchlists worksheet
+    try:
+        watchlist_sheet = client.open(GOOGLE_SHEET_NAME).worksheet("Watchlists")
+    except gspread.WorksheetNotFound:
+        await interaction.followup.send("❌ Could not find a 'Watchlists' tab in your Google Sheet.")
+        return
+
+    # Search TMDb for the movie
+    results = fetch_movie_search_results(movie)
+    if not results:
+        await interaction.followup.send(f"❌ No movies found for '{movie}'.")
+        return
+
+    # Use your existing fuzzy + popularity chooser
+    scored_results = choose_best_movie(movie, results)
+    best_movie = scored_results[0][1]
+
+    details = fetch_movie_details_by_id(best_movie["id"])
+    parsed = parse_movie_details(details)
+
+    # Append a row to Watchlists: Movie Title, Year, Directors, Actors, Rating, Date Added, Status
+    watchlist_sheet.append_row(
+        [
+            parsed["title"],
+            parsed["release_year"],
+            parsed["directors"],
+            parsed["actors"],
+            "",  # Rating blank for now
+            datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "Pending",
+        ]
+    )
+
+    await interaction.followup.send(
+        f"✅ Added **{parsed['title']}** ({parsed['release_year']}) to your watchlist!",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="mywatchlist", description="Show your current watchlist")
+async def mywatchlist_command(interaction: discord.Interaction):
+    """Shows the contents of the Watchlists sheet."""
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        watchlist_sheet = client.open(GOOGLE_SHEET_NAME).worksheet("Watchlists")
+    except gspread.WorksheetNotFound:
+        await interaction.followup.send("❌ Could not find a 'Watchlists' tab in your Google Sheet.")
+        return
+
+    records = watchlist_sheet.get_all_records()
+    if not records:
+        await interaction.followup.send("Your watchlist is empty. Use `/watchlists <movie>` to add one!")
+        return
+
+    # Build a simple embed with up to 10 movies
+    embed = discord.Embed(title=f"Watchlist ({len(records)} movies)")
+    for row in records[:10]:
+        title = row.get("Movie Title", "Unknown")
+        year = row.get("Year", "")
+        status = row.get("Status", "Pending")
+        rating = row.get("Rating") or "No rating yet"
+        directors = (row.get("Directors") or "")[:80]
+
+        status_icon = "🟡" if status.lower() == "pending" else "✅"
+        embed.add_field(
+            name=f"{status_icon} {title} ({year})",
+            value=f"{directors} | Rating: {rating}",
+            inline=False,
+        )
+
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 # ======== Run the bot ========
 bot.run(DISCORD_BOT_TOKEN)
