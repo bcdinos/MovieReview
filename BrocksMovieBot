@@ -61,9 +61,10 @@ def get_movie_details(movie_id):
                 age_rating = certification
                 break
     
-    # Directors/actors
+    # Directors/actors/genres
     directors = [crew['name'] for crew in details.get('credits', {}).get('crew', []) if crew['job'] == 'Director'][:2]
     actors = [cast['name'] for cast in details.get('credits', {}).get('cast', [])][:3]
+    genres = [genre['name'] for genre in details.get('genres', [])][:3]
     
     return {
         'title': details.get('title'),
@@ -71,7 +72,8 @@ def get_movie_details(movie_id):
         'age_rating': age_rating,
         'directors': ', '.join(directors) or 'N/A',
         'actors': ', '.join(actors) or 'N/A',
-        'runtime': f"{details.get('runtime', 0)} min" if details.get('runtime') else 'N/A'
+        'runtime': f"{details.get('runtime', 0)} min" if details.get('runtime') else 'N/A',
+        'genres': ', '.join(genres) or 'N/A'  # REAL GENRES!
     }
 
 def check_watchlist_fuzzy(movie_title, watchlist_data):
@@ -156,11 +158,11 @@ async def rate_movie(interaction: discord.Interaction, movie: str, rating: app_c
             )
             return
         
-        # Log rating - PERFECT COLUMN ORDER
+        # Log rating - PERFECT 9-COLUMN ORDER
         reviews_sheet = spreadsheet.worksheet("Ratings")
         reviews_sheet.append_row([
             movie_data['title'],                    # A: Title
-            'N/A',                                  # B: Genre
+            movie_data['genres'],                   # B: Genre ← REAL GENRES!
             rating,                                 # C: Rating (of 5)
             movie_data['runtime'],                  # D: Runtime
             datetime.now().strftime("%Y-%m-%d"),    # E: Watch Date
@@ -173,6 +175,7 @@ async def rate_movie(interaction: discord.Interaction, movie: str, rating: app_c
         await interaction.followup.send(
             f"✅ **{movie_data['title']}** ({movie_data['release_year']}) rated **{rating}/5** "
             f"(Age Rating: {movie_data['age_rating']})\n"
+            f"**Genre:** {movie_data['genres']}\n"
             f"**Directors:** {movie_data['directors']}\n"
             f"**Actors:** {movie_data['actors']}\n\n"
             f"Recorded in your Google Sheet!"
@@ -220,11 +223,11 @@ async def rate_movie(interaction: discord.Interaction, movie: str, rating: app_c
         )
         return
     
-    # Log rating - PERFECT COLUMN ORDER
+    # Log rating - PERFECT 9-COLUMN ORDER
     reviews_sheet = spreadsheet.worksheet("Ratings")
     reviews_sheet.append_row([
         movie_data['title'],                    # A: Title
-        'N/A',                                  # B: Genre
+        movie_data['genres'],                   # B: Genre ← REAL GENRES!
         view.rating,                            # C: Rating (of 5)
         movie_data['runtime'],                  # D: Runtime
         datetime.now().strftime("%Y-%m-%d"),    # E: Watch Date
@@ -236,6 +239,7 @@ async def rate_movie(interaction: discord.Interaction, movie: str, rating: app_c
     
     embed = discord.Embed(title=f"✅ Rating Recorded!", color=0x00ff00)
     embed.add_field(name=movie_data['title'], value=f"{movie_data['release_year']} • {view.rating}/5", inline=True)
+    embed.add_field(name="Genre", value=movie_data['genres'], inline=True)
     embed.add_field(name="Age Rating", value=movie_data['age_rating'], inline=True)
     embed.add_field(name="Directors", value=movie_data['directors'], inline=False)
     embed.add_field(name="Actors", value=movie_data['actors'], inline=False)
