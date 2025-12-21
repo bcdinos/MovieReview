@@ -183,7 +183,7 @@ async def rate_movie(interaction: discord.Interaction, movie: str, rating: app_c
         options.append(option)
     
     view = MovieSelect(movie_options, interaction, rating=rating, is_watchlist=False)
-    view.select_movie.select.options = options
+    view.select_movie.options = options  # ← FIXED LINE
     
     embed = discord.Embed(title=f"Select {movie} ({len(options)} matches)", color=0x00ff00)
     embed.add_field(name="Instructions", value="Choose the correct movie from the dropdown.", inline=False)
@@ -275,7 +275,7 @@ async def add_watchlist(interaction: discord.Interaction, movie: str):
         options.append(option)
     
     view = MovieSelect(movie_options, interaction, is_watchlist=True)
-    view.select_movie.select.options = options
+    view.select_movie.options = options  # ← FIXED LINE
     
     embed = discord.Embed(title=f"Select movie to add to watchlist", color=0x0099ff)
     embed.add_field(name="Instructions", value="Choose from dropdown below.", inline=False)
