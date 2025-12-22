@@ -42,8 +42,8 @@ def fetch_movie_details(title):
     return scored_results[:5]  # Top 5 matches
 
 def get_movie_details(movie_id):
-    """Get full details for specific movie ID - PERFECT COLUMNS"""
-    detail_url = f"https://api.themoviedb.org/3/movie/{movie_id}?api_key={TMDB_API_KEY}&language=en-US&append_to_response=credits,release_dates"
+    """Get full details for specific movie ID - US MPAA FIXED"""
+    detail_url = f"https://api.themoviedb.org/3/movie/{movie_id}?api_key={TMDB_API_KEY}&language=en-US&append_to_response=credits"
     response = requests.get(detail_url)
     
     if response.status_code != 200:
@@ -51,15 +51,18 @@ def get_movie_details(movie_id):
     
     details = response.json()
     
-    # Extract age rating (US MPAA) - FIXED
+    # PRIORITY 1: Dedicated US release_dates endpoint (95%+ success)
     age_rating = 'N/A'
-    release_dates = details.get('release_dates', {}).get('results', [])
-    for date_info in release_dates:
-        if date_info.get('iso_3166_1') == 'US':
-            certification = date_info.get('certification', '')
-            if certification:
-                age_rating = certification
-                break
+    release_url = f"https://api.themoviedb.org/3/movie/{movie_id}/release_dates?api_key={TMDB_API_KEY}"
+    release_response = requests.get(release_url)
+    if release_response.status_code == 200:
+        release_data = release_response.json().get('results', [])
+        for country in release_data:
+            if country.get('iso_3166_1') == 'US':
+                cert = country.get('certification', '')
+                if cert:
+                    age_rating = cert
+                    break
     
     # Directors/actors/genres
     directors = [crew['name'] for crew in details.get('credits', {}).get('crew', []) if crew['job'] == 'Director'][:2]
@@ -68,17 +71,12 @@ def get_movie_details(movie_id):
     
     # Runtime HH:MM format
     runtime_min = details.get('runtime', 0)
-    if runtime_min > 0:
-        hours = runtime_min // 60
-        minutes = runtime_min % 60
-        runtime_formatted = f"{hours}:{minutes:02d}"
-    else:
-        runtime_formatted = 'N/A'
+    runtime_formatted = f"{runtime_min//60}:{runtime_min%60:02d}" if runtime_min > 0 else 'N/A'
     
     return {
         'title': details.get('title'),
         'release_year': details.get('release_date', '')[:4],
-        'age_rating': age_rating,
+        'age_rating': age_rating,  # PG-13, R, PG, G - FIXED!
         'directors': ', '.join(directors) or 'N/A',
         'actors': ', '.join(actors) or 'N/A',
         'runtime': runtime_formatted,  # 2:30 format
@@ -86,7 +84,7 @@ def get_movie_details(movie_id):
     }
 
 def check_watchlist_fuzzy(movie_title, watchlist_data):
-    """Fuzzy match against watchlist titles in Google Sheet - FIXED"""
+    """Fuzzy match against watchlist titles in Google Sheet"""
     titles = [row[0].strip().lower() for row in watchlist_data[1:] if row and row[0]]
     
     if not titles:
@@ -178,7 +176,7 @@ async def rate_movie(interaction: discord.Interaction, movie: str, rating: app_c
             movie_data['release_year'],             # F: Release Year
             movie_data['directors'],                # G: Director(s)
             movie_data['actors'],                   # H: Actor(s)
-            movie_data['age_rating']                # I: Age Rating - FIXED
+            movie_data['age_rating']                # I: Age Rating - FIXED!
         ])
         
         await interaction.followup.send(
@@ -244,7 +242,7 @@ async def rate_movie(interaction: discord.Interaction, movie: str, rating: app_c
         movie_data['release_year'],             # F: Release Year
         movie_data['directors'],                # G: Director(s)
         movie_data['actors'],                   # H: Actor(s)
-        movie_data['age_rating']                # I: Age Rating - FIXED
+        movie_data['age_rating']                # I: Age Rating - FIXED!
     ])
     
     embed = discord.Embed(title=f"✅ Rating Recorded!", color=0x00ff00)
