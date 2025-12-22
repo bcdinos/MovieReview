@@ -42,8 +42,8 @@ def fetch_movie_details(title):
     return scored_results[:5]  # Top 5 matches
 
 def get_movie_details(movie_id):
-    """Get full details for specific movie ID - US MPAA FIXED"""
-    detail_url = f"https://api.themoviedb.org/3/movie/{movie_id}?api_key={TMDB_API_KEY}&language=en-US&append_to_response=credits"
+    """Get full details - ORIGINAL WORKING AGE RATING + 2 Genres Max"""
+    detail_url = f"https://api.themoviedb.org/3/movie/{movie_id}?api_key={TMDB_API_KEY}&language=en-US&append_to_response=credits,release_dates"
     response = requests.get(detail_url)
     
     if response.status_code != 200:
@@ -51,41 +51,43 @@ def get_movie_details(movie_id):
     
     details = response.json()
     
-    # PRIORITY 1: Dedicated US release_dates endpoint (95%+ success)
+    # ORIGINAL WORKING AGE RATING LOGIC
     age_rating = 'N/A'
-    release_url = f"https://api.themoviedb.org/3/movie/{movie_id}/release_dates?api_key={TMDB_API_KEY}"
-    release_response = requests.get(release_url)
-    if release_response.status_code == 200:
-        release_data = release_response.json().get('results', [])
-        for country in release_data:
-            if country.get('iso_3166_1') == 'US':
-                cert = country.get('certification', '')
-                if cert:
-                    age_rating = cert
-                    break
+    release_dates = details.get('release_dates', {}).get('results', [])
+    for date_info in release_dates:
+        if date_info.get('iso_3166_1') == 'US':
+            certification = date_info.get('certification', '')
+            if certification:
+                age_rating = certification
+                break
     
-    # Directors/actors/genres
+    # Directors/actors/genres - MAX 2 GENRES
     directors = [crew['name'] for crew in details.get('credits', {}).get('crew', []) if crew['job'] == 'Director'][:2]
     actors = [cast['name'] for cast in details.get('credits', {}).get('cast', [])][:3]
-    genres = [genre['name'] for genre in details.get('genres', [])][:3]
+    genres = [genre['name'] for genre in details.get('genres', [])][:2]  # MAX 2 GENRES!
     
     # Runtime HH:MM format
     runtime_min = details.get('runtime', 0)
-    runtime_formatted = f"{runtime_min//60}:{runtime_min%60:02d}" if runtime_min > 0 else 'N/A'
+    if runtime_min > 0:
+        hours = runtime_min // 60
+        minutes = runtime_min % 60
+        runtime_formatted = f"{hours}:{minutes:02d}"
+    else:
+        runtime_formatted = 'N/A'
     
     return {
         'title': details.get('title'),
         'release_year': details.get('release_date', '')[:4],
-        'age_rating': age_rating,  # PG-13, R, PG, G - FIXED!
+        'age_rating': age_rating,  # ORIGINAL WORKING VERSION
         'directors': ', '.join(directors) or 'N/A',
         'actors': ', '.join(actors) or 'N/A',
-        'runtime': runtime_formatted,  # 2:30 format
-        'genres': ', '.join(genres) or 'N/A'
+        'runtime': runtime_formatted,
+        'genres': ', '.join(genres) or 'N/A'  # MAX 2 GENRES
     }
 
 def check_watchlist_fuzzy(movie_title, watchlist_data):
-    """Fuzzy match against watchlist titles in Google Sheet"""
-    titles = [row[0].strip().lower() for row in watchlist_data[1:] if row and row[0]]
+    """Fuzzy match against watchlist titles in Google Sheet - FIXED"""
+    titles = [row[0].strip().lower() for row in watchlist_data[1:] if row and row[0]]  # Skip header
     
     if not titles:
         return False, None, 0
@@ -165,27 +167,25 @@ async def rate_movie(interaction: discord.Interaction, movie: str, rating: app_c
             )
             return
         
-        # Log rating - EXACT 9-COLUMN ORDER
+        # Log rating - PERFECT 9-COLUMN ORDER
         reviews_sheet = spreadsheet.worksheet("Ratings")
         reviews_sheet.append_row([
             movie_data['title'],                    # A: Title
-            movie_data['genres'],                   # B: Genre
+            movie_data['genres'],                   # B: Genre (MAX 2)
             rating,                                 # C: Rating (of 5)
             movie_data['runtime'],                  # D: Runtime (2:30)
             datetime.now().strftime("%Y-%m-%d"),    # E: Watch Date
             movie_data['release_year'],             # F: Release Year
             movie_data['directors'],                # G: Director(s)
             movie_data['actors'],                   # H: Actor(s)
-            movie_data['age_rating']                # I: Age Rating - FIXED!
+            movie_data['age_rating']                # I: Age Rating - ORIGINAL WORKING!
         ])
         
         await interaction.followup.send(
             f"✅ **{movie_data['title']}** ({movie_data['release_year']}) rated **{rating}/5** "
             f"(Age Rating: {movie_data['age_rating']})\n"
-            f"**Genre:** {movie_data['genres']}\n"
-            f"**Runtime:** {movie_data['runtime']}\n"
-            f"**Directors:** {movie_data['directors']}\n"
-            f"**Actors:** {movie_data['actors']}\n\n"
+            f"**Genre:** {movie_data['genres']} | **Runtime:** {movie_data['runtime']}\n"
+            f"**Directors:** {movie_data['directors']} | **Actors:** {movie_data['actors']}\n\n"
             f"Recorded in your Google Sheet!"
         )
         return
@@ -231,18 +231,18 @@ async def rate_movie(interaction: discord.Interaction, movie: str, rating: app_c
         )
         return
     
-    # Log rating - EXACT 9-COLUMN ORDER
+    # Log rating - PERFECT 9-COLUMN ORDER
     reviews_sheet = spreadsheet.worksheet("Ratings")
     reviews_sheet.append_row([
         movie_data['title'],                    # A: Title
-        movie_data['genres'],                   # B: Genre
+        movie_data['genres'],                   # B: Genre (MAX 2)
         view.rating,                            # C: Rating (of 5)
         movie_data['runtime'],                  # D: Runtime (2:30)
         datetime.now().strftime("%Y-%m-%d"),    # E: Watch Date
         movie_data['release_year'],             # F: Release Year
         movie_data['directors'],                # G: Director(s)
         movie_data['actors'],                   # H: Actor(s)
-        movie_data['age_rating']                # I: Age Rating - FIXED!
+        movie_data['age_rating']                # I: Age Rating - ORIGINAL WORKING!
     ])
     
     embed = discord.Embed(title=f"✅ Rating Recorded!", color=0x00ff00)
