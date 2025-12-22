@@ -46,7 +46,7 @@ def fetch_movie_details(title):
     return scored_results[:5]
 
 def get_movie_details(movie_id):
-    """YOUR ORIGINAL WORKING VERSION + 2 genres + runtime fix"""
+    """TRIPLE FALLBACK AGE RATING + 2 genres + runtime fix"""
     detail_url = f"https://api.themoviedb.org/3/movie/{movie_id}?api_key={TMDB_API_KEY}&language=en-US&append_to_response=credits,release_dates"
     response = requests.get(detail_url)
     
@@ -55,15 +55,38 @@ def get_movie_details(movie_id):
     
     details = response.json()
     
-    # YOUR ORIGINAL WORKING AGE RATING
+    # METHOD 1: Nested release_dates (CORRECT STRUCTURE)
     age_rating = 'N/A'
     release_dates = details.get('release_dates', {}).get('results', [])
-    for date_info in release_dates:
-        if date_info.get('iso_3166_1') == 'US':
-            certification = date_info.get('certification', '')
-            if certification:
-                age_rating = certification
+    for country in release_dates:
+        if country.get('iso_3166_1') == 'US':
+            for release in country.get('release_dates', []):  # NESTED!
+                cert = release.get('certification', '')
+                if cert:
+                    age_rating = cert
+                    break
+            if age_rating != 'N/A':
                 break
+    
+    # METHOD 2: Direct movie certification (backup)
+    if age_rating == 'N/A':
+        age_rating = details.get('certification', 'N/A')
+    
+    # METHOD 3: Content ratings endpoint (nuclear option)
+    if age_rating == 'N/A':
+        content_url = f"https://api.themoviedb.org/3/movie/{movie_id}/release_dates?api_key={TMDB_API_KEY}"
+        content_resp = requests.get(content_url)
+        if content_resp.status_code == 200:
+            content_data = content_resp.json().get('results', [])
+            for country in content_data:
+                if country.get('iso_3166_1') == 'US':
+                    for release in country.get('release_dates', []):
+                        cert = release.get('certification', '')
+                        if cert:
+                            age_rating = cert
+                            break
+                    if age_rating != 'N/A':
+                        break
     
     # Directors/actors/genres - MAX 2 GENRES
     directors = [crew['name'] for crew in details.get('credits', {}).get('crew', []) if crew['job'] == 'Director'][:2]
@@ -124,7 +147,7 @@ class MovieSelectView(View):
 
     async def movie_callback(self, interaction: discord.Interaction):
         await interaction.response.defer()
-        selected_value = interaction.data['values'][0]  # FIXED: String from dropdown
+        selected_value = interaction.data['values'][0]
         self.selected_movie = next((movie for _, movie in self.movie_options if str(movie['id']) == selected_value), None)
         self.stop()
 
@@ -156,7 +179,7 @@ async def rate_movie(interaction: discord.Interaction, movie: str, rating: app_c
             )
             return
         
-        # PERFECT 9-COLUMN ORDER
+        # PERFECT 9-COLUMN ORDER: Title, Genres, Rating, Runtime, Watch Date, Release Year, Directors, Actors, Age Rating
         ratings_sheet.append_row([
             movie_data['title'],                    # A: Title
             movie_data['genres'],                   # B: Genre (MAX 2)
@@ -166,7 +189,7 @@ async def rate_movie(interaction: discord.Interaction, movie: str, rating: app_c
             movie_data['release_year'],             # F: Release Year
             movie_data['directors'],                # G: Director(s)
             movie_data['actors'],                   # H: Actor(s)
-            movie_data['age_rating']                # I: Age Rating - WORKING!
+            movie_data['age_rating']                # I: Age Rating - FIXED!
         ])
         
         await interaction.followup.send(
@@ -216,7 +239,7 @@ async def rate_movie(interaction: discord.Interaction, movie: str, rating: app_c
         movie_data['release_year'],             # F: Release Year
         movie_data['directors'],                # G: Director(s)
         movie_data['actors'],                   # H: Actor(s)
-        movie_data['age_rating']                # I: Age Rating - WORKING!
+        movie_data['age_rating']                # I: Age Rating - FIXED!
     ])
     
     embed = discord.Embed(title=f"✅ Rating Recorded!", color=0x00ff00)
