@@ -42,7 +42,7 @@ def fetch_movie_details(title):
         score = similarity * 0.7 + popularity * 30
         scored_results.append((score, movie))
     
-    scored_results.sort(reverse=True)
+    scored_results.sort(key=lambda x: x[0], reverse=True)
     return scored_results[:5]
 
 def get_movie_details(movie_id):
