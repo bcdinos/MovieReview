@@ -190,7 +190,7 @@ async def rate_movie(interaction: discord.Interaction, movie: str, rating: app_c
             movie_data['directors'],                # G: Director(s)
             movie_data['actors'],                   # H: Actor(s)
             movie_data['age_rating']                # I: Age Rating - FIXED!
-        ])
+        ], value_input_option='USER_ENTERED')
         
         await interaction.followup.send(
             f"✅ **{movie_data['title']}** ({movie_data['release_year']}) rated **{rating}/5** "
@@ -240,7 +240,7 @@ async def rate_movie(interaction: discord.Interaction, movie: str, rating: app_c
         movie_data['directors'],                # G: Director(s)
         movie_data['actors'],                   # H: Actor(s)
         movie_data['age_rating']                # I: Age Rating - FIXED!
-    ])
+    ], value_input_option='USER_ENTERED')
     
     embed = discord.Embed(title=f"✅ Rating Recorded!", color=0x00ff00)
     embed.add_field(name=movie_data['title'], value=f"{movie_data['release_year']} • {view.rating}/5", inline=True)
