@@ -282,7 +282,7 @@ async def add_watchlist(interaction: discord.Interaction, movie: str):
         watchlist_sheet.append_row([
             movie_data['title'],                    # A: Movie Title
             datetime.now().strftime("%Y-%m-%d")     # B: Date Added
-        ])
+            ], value_input_option='USER_ENTERED')
         await interaction.followup.send(f"✅ **{movie_data['title']}** added to watchlist!")
         return
     
@@ -316,7 +316,7 @@ async def add_watchlist(interaction: discord.Interaction, movie: str):
     watchlist_sheet.append_row([
         movie_data['title'],                    # A: Movie Title
         datetime.now().strftime("%Y-%m-%d")     # B: Date Added
-    ])
+        ], value_input_option='USER_ENTERED')
     await interaction.edit_original_response(content=f"✅ **{movie_data['title']}** added to watchlist!", view=None)
 
 bot.run(DISCORD_BOT_TOKEN)
